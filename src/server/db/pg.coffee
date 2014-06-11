@@ -39,8 +39,38 @@ module.exports = PgDb = (options) ->
   options ?= {}
   options[k] ?= v for k, v of defaultOptions
 
-  client = options.client or new pg.Client options.uri
-  client.connect()
+  client = null
+
+  makeQuery = (sql, values, callback) ->
+    if !callback
+      callback = values
+      values = []
+
+    console.log("SHAREJS NEW PG CLIENT") unless client
+    client = new pg.Client(options.uri)  unless client
+
+    timeout = setTimeout () ->
+      client.end
+      client = null
+      error = new Error("SHAREJS CONNECTION TIMEOUT")
+      console.log(error.message)
+      callback(error)
+    , 1000*60
+
+    client.connect (error) ->
+      if error
+        client.end
+        client = null
+        console.log("SHAREJS CONNECT ERROR", error?.message)
+        callback error
+      else
+        client.query sql, values, (error, result) ->
+          clearTimeout(timeout);
+          if error
+            console.log("SHAREJS QUERY ERROR", error?.message)
+          callback error, result
+
+  # client.connect()
 
   snapshot_table = options.schema and "#{options.schema}.#{options.snapshot_table}" or options.snapshot_table
   operations_table = options.schema and "#{options.schema}.#{options.operations_table}" or options.operations_table
@@ -72,14 +102,11 @@ module.exports = PgDb = (options) ->
         CONSTRAINT operations_pkey PRIMARY KEY (doc, v)
       );
     """
-    client.query sql, (error, result) ->
-      callback? error?.message
+    makeQuery sql, callback
 
   # This will perminantly delete all data in the database.
   @dropTables = (callback) ->
-    sql = "DROP SCHEMA #{options.schema} CASCADE;"
-    client.query sql, (error, result) ->
-      callback? error.message
+    makeQuery "DROP SCHEMA #{options.schema} CASCADE;", callback
 
   @create = (docName, docData, callback) ->
     sql = """
@@ -87,7 +114,7 @@ module.exports = PgDb = (options) ->
         VALUES ($1, $2, $3, $4, $5, now())
     """
     values = [docName, docData.v, JSON.stringify(docData.snapshot), JSON.stringify(docData.meta), docData.type]
-    client.query sql, values, (error, result) ->
+    makeQuery sql, values, (error, result) ->
       if !error?
         callback?()
       else if error.toString().match "duplicate key value violates unique constraint"
@@ -102,14 +129,14 @@ module.exports = PgDb = (options) ->
       RETURNING *
     """
     values = [docName]
-    client.query sql, values, (error, result) ->
+    makeQuery sql, values, (error, result) ->
       if !error?
         sql = """
           DELETE FROM #{snapshot_table}
           WHERE "doc" = $1
           RETURNING *
         """
-        client.query sql, values, (error, result) ->
+        makeQuery sql, values, (error, result) ->
           if !error? and result.rows.length > 0
             callback?()
           else if !error?
@@ -128,7 +155,7 @@ module.exports = PgDb = (options) ->
       LIMIT 1
     """
     values = [docName]
-    client.query sql, values, (error, result) ->
+    makeQuery sql, values, (error, result) ->
       if !error? and result.rows.length > 0
         row = result.rows[0]
         data =
@@ -149,7 +176,7 @@ module.exports = PgDb = (options) ->
       WHERE "doc" = $1
     """
     values = [docName, docData.v, JSON.stringify(docData.snapshot), JSON.stringify(docData.meta)]
-    client.query sql, values, (error, result) ->
+    makeQuery sql, values, (error, result) ->
       if !error?
         callback?()
       else
@@ -165,7 +192,7 @@ module.exports = PgDb = (options) ->
       ORDER BY "v" ASC
     """
     values = [start, end, docName]
-    client.query sql, values, (error, result) ->
+    makeQuery sql, values, (error, result) ->
       if !error?
         data = result.rows.map (row) ->
           return {
@@ -183,7 +210,7 @@ module.exports = PgDb = (options) ->
         VALUES ($1, $2, $3, $4)
     """
     values = [docName, JSON.stringify(opData.op), opData.v, JSON.stringify(opData.meta)]
-    client.query sql, values, (error, result) ->
+    makeQuery sql, values, (error, result) ->
       if !error?
         callback?()
       else
@@ -194,7 +221,7 @@ module.exports = PgDb = (options) ->
   #
   # But, its not really a big problem.
   if options.create_tables_automatically
-    client.query "SELECT * from #{snapshot_table} LIMIT 0", (error, result) =>
+    makeQuery "SELECT * from #{snapshot_table} LIMIT 0", (error, result) ->
       @initialize() if error?.message.match "does not exist"
 
   this
