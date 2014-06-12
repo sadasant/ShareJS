@@ -41,33 +41,38 @@ module.exports = PgDb = (options) ->
 
   client = null
 
+  restartClient = () ->
+    client.end if client
+    console.log("SHAREJS NEW PG CLIENT")
+    client = new pg.Client(options.uri)
+    client.on "error", (err) ->
+      console.log("SHAREJS PG ERROR")
+      restartClient()
+
+  restartClient()
+
   makeQuery = (sql, values, callback) ->
     if !callback
       callback = values
       values = []
 
-    console.log("SHAREJS NEW PG CLIENT") unless client
-    client = new pg.Client(options.uri)  unless client
-
     timeout = setTimeout () ->
-      client.end
-      client = null
-      error = new Error("SHAREJS CONNECTION TIMEOUT")
+      error = new Error("SHAREJS PG CONNECTION TIMEOUT")
       console.log(error.message)
+      restartClient()
       callback(error)
     , 1000*60
 
     client.connect (error) ->
       if error
-        client.end
-        client = null
-        console.log("SHAREJS CONNECT ERROR", error?.message)
+        console.log("SHAREJS PG CONNECT ERROR", error?.message)
+        restartClient()
         callback error
       else
         client.query sql, values, (error, result) ->
           clearTimeout(timeout);
           if error
-            console.log("SHAREJS QUERY ERROR", error?.message)
+            console.log("SHAREJS PG QUERY ERROR", error?.message)
           callback error, result
 
   # client.connect()
