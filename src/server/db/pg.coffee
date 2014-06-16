@@ -47,11 +47,11 @@ module.exports = PgDb = (options) ->
     client = new pg.Client(options.uri)
     client.on "error", (err) ->
       console.log("SHAREJS PG ERROR")
-      restartClient()
+      setTimeout restartClient, 10*1000
     client.connect (error) ->
       if error
         console.log("SHAREJS PG CONNECT ERROR", error?.message)
-        restartClient()
+        setTimeout restartClient, 10*1000
 
   restartClient()
 
